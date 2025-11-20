@@ -2,11 +2,8 @@
 FROM openfoldconsortium/openfold3:stable
 
 COPY openfold3 /opt/openfold3
-COPY environments/development.txt /opt/
-COPY setup.py /opt/
-
-WORKDIR /opt/
-RUN pip install -r development.txt
-RUN python setup.py install
+COPY environments/development.txt /opt/openfold3/development.txt
 
 WORKDIR /opt/openfold3
+RUN pip install -r development.txt
+RUN pip install --force-reinstall --no-deps .
