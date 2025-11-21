@@ -711,17 +711,22 @@ class ColabFoldQueryRunner:
 
         # Read template alignments if the file exists and has content
         template_alignments_file = self.output_directory / "raw/main/pdb70.m8"
-        if template_alignments_file.exists() and template_alignments_file.stat().st_size > 0:
+        if (
+            template_alignments_file.exists()
+            and template_alignments_file.stat().st_size > 0
+        ):
             template_alignments = pd.read_csv(
                 template_alignments_file, sep="\t", header=None
             )
             m_with_templates = set(template_alignments[0])
         else:
-            # pdb70.m8 downloaded by Colabfold returned empty - No template alignments available 
+            # pdb70.m8 downloaded by Colabfold returned empty - No template alignments available
             # Create empty DataFrame with expected column structure (at least column 0)
             # to match the structure when file is read with header=None.
-            logger.warning(f"Colabfold returned no templates. \
-             Proceeding without template alignments for this batch.")
+            logger.warning(
+                f"Colabfold returned no templates. \
+             Proceeding without template alignments for this batch."
+            )
             template_alignments = pd.DataFrame()
             m_with_templates = set()
 
