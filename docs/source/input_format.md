@@ -55,6 +55,7 @@ All chains must define a unique ```chain_ids``` field and appropriate sequence o
   {
     "molecule_type": "protein",
     "chain_ids": "A",
+    "description": "Optional metadata example",
     "sequence": "PVLSCGEWQCL",
     "use_msas": true,
     "use_main_msas": true,
@@ -71,6 +72,9 @@ All chains must define a unique ```chain_ids``` field and appropriate sequence o
 
   - `chain_ids` *(str | list[str], required)*
     - One or more identifiers for this chain. Used to map sequences to structure outputs.
+
+  - `description` *(str | None, optional, default = null)
+    - Optional metadata to provide for each chain.
 
   - `sequence` *(str, required)*
     - Amino acid sequence (1-letter codes), supporting standard residues, X (unknown), and U (selenocysteine).

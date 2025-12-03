@@ -49,6 +49,7 @@ class Chain(BaseModel):
     }
     molecule_type: Annotated[MoleculeType, BeforeValidator(_convert_molecule_type)]
     chain_ids: Annotated[list[str], BeforeValidator(_ensure_list)]
+    description: str | None = None
     sequence: str | None = None
     non_canonical_residues: (
         Annotated[dict[int, str], BeforeValidator(_cast_keys_to_int)] | None
