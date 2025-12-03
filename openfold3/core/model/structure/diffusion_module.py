@@ -397,6 +397,18 @@ class SampleDiffusion(nn.Module):
         )
 
         num_steps = len(noise_schedule) - 1
+
+        # Log GPU memory status
+        if torch.cuda.is_available():
+            gpu_mem_allocated = torch.cuda.memory_allocated() / 1024**3
+            gpu_mem_reserved = torch.cuda.memory_reserved() / 1024**3
+            gpu_mem_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            print(
+                f"[GPU] Memory: {gpu_mem_allocated:.2f}GB allocated, "
+                f"{gpu_mem_reserved:.2f}GB reserved, {gpu_mem_total:.2f}GB total",
+                flush=True
+            )
+
         print(
             f"[Diffusion] Starting sampling: {num_steps} steps, "
             f"{num_atoms} atoms, {no_rollout_samples} samples, "
@@ -455,9 +467,13 @@ class SampleDiffusion(nn.Module):
 
             # Log progress every 20 steps
             if (tau + 1) % 20 == 0 or tau == num_steps - 1:
+                gpu_info = ""
+                if torch.cuda.is_available():
+                    gpu_mem_gb = torch.cuda.memory_allocated() / 1024**3
+                    gpu_info = f" | GPU: {gpu_mem_gb:.2f}GB"
                 print(
                     f"[Diffusion] Step {tau + 1}/{num_steps} "
-                    f"(t={t.item():.4f} -> {c_tau.item():.4f})",
+                    f"(t={t.item():.4f} -> {c_tau.item():.4f}){gpu_info}",
                     flush=True
                 )
 
