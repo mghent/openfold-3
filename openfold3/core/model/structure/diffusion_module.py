@@ -396,6 +396,14 @@ class SampleDiffusion(nn.Module):
             dtype=atom_mask.dtype,
         )
 
+        num_steps = len(noise_schedule) - 1
+        print(
+            f"[Diffusion] Starting sampling: {num_steps} steps, "
+            f"{num_atoms} atoms, {no_rollout_samples} samples, "
+            f"constraints={'ON' if use_constraints else 'OFF'}",
+            flush=True
+        )
+
         for tau, c_tau in enumerate(noise_schedule[1:]):
             xl = centre_random_augmentation(xl=xl, atom_mask=atom_mask)
 
@@ -445,4 +453,13 @@ class SampleDiffusion(nn.Module):
             dt = c_tau - t
             xl = xl_noisy + self.step_scale * dt * delta
 
+            # Log progress every 20 steps
+            if (tau + 1) % 20 == 0 or tau == num_steps - 1:
+                print(
+                    f"[Diffusion] Step {tau + 1}/{num_steps} "
+                    f"(t={t.item():.4f} -> {c_tau.item():.4f})",
+                    flush=True
+                )
+
+        print(f"[Diffusion] Sampling complete", flush=True)
         return xl

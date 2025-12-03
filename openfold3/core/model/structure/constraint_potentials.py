@@ -292,10 +292,15 @@ def apply_separation_constraints(
 
     atom_mask = batch["atom_mask"]
 
+    # Compute initial energy for logging
+    initial_energy = domain_separation_potential(
+        positions, domain_masks, atom_mask, min_distances, t, t_max, eps=eps
+    )
+
     # Iteratively apply gradient descent
     constrained_positions = positions.clone()
 
-    for _ in range(num_steps):
+    for step in range(num_steps):
         # Compute gradient of separation potential
         grad = compute_separation_gradient(
             constrained_positions,
@@ -312,6 +317,19 @@ def apply_separation_constraints(
 
         # Ensure masked atoms stay at zero
         constrained_positions = constrained_positions * atom_mask[..., None]
+
+    # Compute final energy and log if there was a violation
+    final_energy = domain_separation_potential(
+        constrained_positions, domain_masks, atom_mask, min_distances, t, t_max, eps=eps
+    )
+
+    if initial_energy.sum() > 0:
+        print(
+            f"[Constraint] t={t.mean().item():.4f} "
+            f"energy: {initial_energy.mean().item():.4f} -> {final_energy.mean().item():.4f} "
+            f"grad_norm={grad.norm().item():.4f}",
+            flush=True
+        )
 
     return constrained_positions
 
