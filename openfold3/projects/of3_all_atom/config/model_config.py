@@ -372,6 +372,10 @@ model_config = mlc.ConfigDict(
                 "gamma_min": 1.0,
                 "noise_scale": 1.003,
                 "step_scale": 1.5,
+                # Domain separation constraint parameters
+                "apply_constraints": False,  # Enable for membrane proteins
+                "constraint_gradient_scale": 0.1,  # Step size for gradient descent
+                "constraint_num_steps": 1,  # Gradient steps per diffusion step
             },
             "heads": {
                 "max_atoms_per_token": max_atoms_per_token,

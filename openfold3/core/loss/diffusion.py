@@ -308,6 +308,80 @@ def smooth_lddt_loss(
     return 1 - lddt
 
 
+def domain_separation_loss(
+    x: torch.Tensor,
+    batch: dict,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """
+    Compute loss for domain separation constraint violations.
+
+    This loss penalizes structures where domain centroids are closer than
+    the specified minimum distances. Uses a flat-bottom quadratic penalty.
+
+    Args:
+        x:
+            [*, N_atom, 3] Atom positions
+        batch:
+            Feature dictionary containing:
+            - "atom_mask": [*, N_atom] Valid atom mask
+            - "domain_masks": [*, N_atom, num_domains] Domain membership masks
+            - "domain_min_distances": [num_domains, num_domains] Min distances (Å)
+        eps:
+            Small constant for stability
+
+    Returns:
+        [*] Domain separation loss (0 if constraints satisfied)
+    """
+    domain_masks = batch.get("domain_masks")
+    min_distances = batch.get("domain_min_distances")
+
+    if domain_masks is None or min_distances is None:
+        return torch.tensor(0.0, device=x.device, dtype=x.dtype)
+
+    atom_mask = batch["atom_mask"]
+
+    # Compute domain centroids
+    # Apply atom mask to domain masks
+    # [*, N_atom, num_domains]
+    valid_domain_masks = domain_masks * atom_mask[..., None]
+
+    # Compute weighted sum of positions for each domain
+    # [*, num_domains, 3]
+    weighted_positions = torch.einsum(
+        "...ad,...ac->...dc", valid_domain_masks, x
+    )
+
+    # Count atoms per domain for normalization
+    # [*, num_domains]
+    atom_counts = valid_domain_masks.sum(dim=-2) + eps
+
+    # Compute centroids
+    # [*, num_domains, 3]
+    centroids = weighted_positions / atom_counts[..., None]
+
+    # Compute pairwise distances between centroids
+    # [*, num_domains, num_domains]
+    dists = torch.cdist(centroids, centroids, p=2)
+
+    # Flat-bottom potential: penalize if distance < min_distance
+    # violations = max(min_distance - actual_distance, 0)
+    violations = torch.relu(min_distances - dists)
+
+    # Only consider upper triangle (avoid double counting)
+    num_domains = domain_masks.shape[-1]
+    triu_mask = torch.triu(
+        torch.ones(num_domains, num_domains, device=x.device, dtype=x.dtype),
+        diagonal=1
+    )
+
+    # Quadratic penalty, normalized by number of domain pairs
+    num_pairs = triu_mask.sum() + eps
+    loss = (violations ** 2 * triu_mask).sum(dim=(-1, -2)) / num_pairs
+
+    return loss
+
+
 def run_low_mem_loss_fn(
     loss_fn: Callable, x: torch.Tensor, kwargs: dict, chunk_size: int
 ) -> torch.Tensor:
@@ -348,16 +422,19 @@ def diffusion_loss(
     dna_weight: float = 5.0,
     rna_weight: float = 5.0,
     ligand_weight: float = 10.0,
+    domain_separation_weight: float = 0.0,
     eps: float = 1e-8,
     chunk_size: int | None = None,
     **kwargs,
 ) -> [torch.Tensor, dict]:
     """
-    Implements AF3 Equation 6.
+    Implements AF3 Equation 6 with optional domain separation loss.
 
     Args:
         batch:
-            Feature dictionary
+            Feature dictionary. For domain separation, batch should contain:
+            - "domain_masks": [*, N_atom, num_domains] Domain membership masks
+            - "domain_min_distances": [num_domains, num_domains] Min distances (Å)
         x:
             [*, N_atom, 3] Atom positions
         t:
@@ -370,6 +447,8 @@ def diffusion_loss(
             Upweight factor for RNA atoms
         ligand_weight:
             Upweight factor for ligand atoms
+        domain_separation_weight:
+            Weight for domain separation loss (default 0.0, disabled)
         eps:
             Small constant for stability
         chunk_size:
@@ -464,10 +543,23 @@ def diffusion_loss(
     l_bond = l_bond * bond_weight
     l_smooth_lddt = l_smooth_lddt * smooth_lddt_weight
 
+    # Domain separation loss (optional, for membrane proteins)
+    l_domain_sep = 0.0
+    if domain_separation_weight > 0.0 and batch.get("domain_masks") is not None:
+        l_domain_sep = domain_separation_loss(x=x, batch=batch, eps=eps)
+        loss_breakdown["domain_separation"] = l_domain_sep.detach().clone().mean(dim=-1)
+        valid_loss_breakdown["domain_separation_loss"] = loss_masked_batch_mean(
+            loss=l_domain_sep.mean(dim=-1),
+            weight=mse_weight.squeeze(-1),
+            apply_weight=False,
+            eps=eps,
+        )
+        l_domain_sep = l_domain_sep * domain_separation_weight
+
     # Note: Changed from SI, denominator (t + sigma_data) ** 2 changed
     #  to (t * sigma_data) ** 2.
     w = (t**2 + sigma_data**2) / (t * sigma_data) ** 2
-    l = w * (l_mse + l_bond) + l_smooth_lddt
+    l = w * (l_mse + l_bond + l_domain_sep) + l_smooth_lddt
 
     # Mean over diffusion sample dimension
     mean_loss = torch.mean(l, dim=-1)

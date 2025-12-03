@@ -29,6 +29,7 @@ from openfold3.core.model.layers.sequence_local_atom_attention import (
     AtomAttentionEncoder,
 )
 from openfold3.core.model.primitives import LayerNorm, Linear
+from openfold3.core.model.structure.constraint_potentials import apply_separation_constraints
 from openfold3.core.utils.rigid_utils import quat_to_rot
 
 
@@ -277,7 +278,11 @@ class DiffusionModule(nn.Module):
 
 class SampleDiffusion(nn.Module):
     """
-    Implements AF3 Algorithm 18.
+    Implements AF3 Algorithm 18 with optional domain separation constraints.
+
+    Extended to support Boltz-style steering potentials for enforcing minimum
+    distance constraints between protein domains (e.g., extracellular vs
+    intracellular domains in membrane proteins).
     """
 
     def __init__(
@@ -287,6 +292,10 @@ class SampleDiffusion(nn.Module):
         noise_scale: float,
         step_scale: float,
         diffusion_module: DiffusionModule,
+        # Constraint parameters
+        apply_constraints: bool = False,
+        constraint_gradient_scale: float = 0.1,
+        constraint_num_steps: int = 1,
     ):
         """
         Args:
@@ -300,6 +309,12 @@ class SampleDiffusion(nn.Module):
                 Step scaling factor
             diffusion_module:
                 An instantiated DiffusionModule
+            apply_constraints:
+                Whether to apply domain separation constraints during sampling
+            constraint_gradient_scale:
+                Step size for constraint gradient descent (default 0.1)
+            constraint_num_steps:
+                Number of gradient steps per diffusion step (default 1)
         """
         super().__init__()
         self.gamma_0 = gamma_0
@@ -307,6 +322,11 @@ class SampleDiffusion(nn.Module):
         self.noise_scale = noise_scale
         self.step_scale = step_scale
         self.diffusion_module = diffusion_module
+
+        # Constraint enforcement parameters
+        self.apply_constraints = apply_constraints
+        self.constraint_gradient_scale = constraint_gradient_scale
+        self.constraint_num_steps = constraint_num_steps
 
     def forward(
         self,
@@ -322,11 +342,14 @@ class SampleDiffusion(nn.Module):
         use_lma: bool = False,
         use_high_precision_attention: bool = False,
         _mask_trans: bool = True,
+        apply_constraints: bool | None = None,
     ) -> torch.Tensor:
         """
         Args:
             batch:
-                Feature dictionary
+                Feature dictionary. For constraint enforcement, batch should contain:
+                - "domain_masks": [*, N_atom, num_domains] Binary domain membership
+                - "domain_min_distances": [num_domains, num_domains] Min distances (Å)
             si_input:
                 [*, N_token, c_s_input] Input embedding
             si_trunk:
@@ -347,11 +370,25 @@ class SampleDiffusion(nn.Module):
                 Whether to run attention in high precision
             _mask_trans:
                 Whether to mask the output of the transition layer
+            apply_constraints:
+                Override for self.apply_constraints. If None, uses self.apply_constraints.
         Returns:
             [*, N_atom, 3] Sampled atom positions
         """
         atom_mask = batch["atom_mask"]
         batch_dim, num_atoms = atom_mask.shape[0], atom_mask.shape[-1]
+
+        # Determine whether to apply constraints
+        use_constraints = apply_constraints if apply_constraints is not None else self.apply_constraints
+        # Only apply if constraint data is present in batch
+        has_constraint_data = (
+            batch.get("domain_masks") is not None and
+            batch.get("domain_min_distances") is not None
+        )
+        use_constraints = use_constraints and has_constraint_data
+
+        # Get t_max for time-dependent constraint scaling
+        t_max = noise_schedule[0].item()
 
         xl = noise_schedule[0] * torch.randn(
             (batch_dim, no_rollout_samples, num_atoms, 3),
@@ -390,6 +427,17 @@ class SampleDiffusion(nn.Module):
                 use_high_precision_attention=use_high_precision_attention,
                 _mask_trans=_mask_trans,
             )
+
+            # Apply domain separation constraints (Boltz-style steering)
+            if use_constraints:
+                xl_denoised = apply_separation_constraints(
+                    positions=xl_denoised,
+                    batch=batch,
+                    t=t,
+                    t_max=t_max,
+                    gradient_scale=self.constraint_gradient_scale,
+                    num_steps=self.constraint_num_steps,
+                )
 
             # TODO: Changed from SI, xl_noisy used instead of xl as in EDM paper
             #  Verify that this is working correctly

@@ -24,6 +24,44 @@ A summary of our supported features includes:
 - Kernel acceleration through [cuEquivariance](https://docs.nvidia.com/cuda/cuequivariance) and [DeepSpeed4Science](https://www.deepspeed.ai/tutorials/ds4sci_evoformerattention/) kernels - more details [here](https://openfold-3.readthedocs.io/en/latest/kernels.html)
 - Support for [multi-query jobs](https://openfold-3.readthedocs.io/en/latest/input_format.html) with [distributed predictions across multiple GPUs](https://openfold-3.readthedocs.io/en/latest/inference.html#inference-run-on-multiple-gpus)
 - Custom settings for [memory constrained GPU resources](https://openfold-3.readthedocs.io/en/latest/inference.html#inference-low-memory-mode)
+- **Domain separation constraints** for membrane proteins (see below)
+
+## Domain Separation Constraints
+
+OpenFold3 supports Boltz-style steering potentials for enforcing minimum distance constraints between protein domains during diffusion sampling. This is particularly useful for membrane proteins where extracellular, transmembrane, and intracellular domains must maintain physical separation.
+
+### Features
+
+- **Centroid-based separation potential**: Computes domain centers of mass and enforces minimum distances
+- **Time-dependent scheduling**: Uses Boltz's exponential formula to scale constraints during diffusion (5Å at t=1 → 1Å at t=0)
+- **Flat-bottom quadratic penalty**: Zero energy when constraints are satisfied, increasing penalty for violations
+- **Training-time loss**: Optional `domain_separation_loss` for constraint-aware training
+
+### Usage
+
+To enable constraints during inference, provide domain masks and minimum distances in the batch:
+
+```python
+# Define domain membership for each atom
+batch["domain_masks"] = torch.zeros(batch_size, num_atoms, num_domains)
+batch["domain_masks"][:, :906, 0] = 1      # Extracellular domain
+batch["domain_masks"][:, 930:952, 1] = 1   # Transmembrane domain
+batch["domain_masks"][:, 953:, 2] = 1      # Intracellular domain
+
+# Define minimum distances between domains (Ångstroms)
+batch["domain_min_distances"] = torch.zeros(num_domains, num_domains)
+batch["domain_min_distances"][0, 2] = 30.0  # Extracellular <-> Intracellular: 30Å
+batch["domain_min_distances"][2, 0] = 30.0
+
+# Enable constraints in config
+config.architecture.sample_diffusion.apply_constraints = True
+config.architecture.sample_diffusion.constraint_gradient_scale = 0.1
+config.architecture.sample_diffusion.constraint_num_steps = 1
+```
+
+For training with constraint awareness, set `domain_separation_weight > 0` in the diffusion loss.
+
+Reference: [Boltz-1 steering potentials](https://github.com/jwohlwend/boltz)
 
 ## Quick-Start for Inference
 
